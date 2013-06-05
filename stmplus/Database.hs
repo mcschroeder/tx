@@ -1,6 +1,7 @@
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE GADTs #-}
 
 module Database where
 
@@ -10,42 +11,47 @@ import Control.Monad
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Reader
 
-newtype TX d a = TX (ReaderT (Env d) STM a)
+newtype TX env a = TX (ReaderT env STM a)
     deriving (Functor, Applicative, Monad)
 
-data Env d = Env { userData :: d, 
-                   queue :: (Maybe (TQueue String)) }
+data Env u d where
+    Env :: Update u d => TQueue u -> d -> Env u d
 
-persistently :: Update u d => d -> TX d () -> IO ()
-persistently d (TX action) = do
+loadEnv :: Update u d => d -> IO (Env u d)
+loadEnv d = do
     q <- newTQueueIO
-    let env = Env d (Just q)
+    -- forkIO $ watcher q   -- TODO: ensure only one watcher exists at any one time
+    return (Env q d)
+
+watcher :: Update u d => TQueue u -> IO ()
+watcher q = forever $ do
+    u <- atomically $ readTQueue q
+    print u  -- TODO
+
+persistently :: Env u d -> TX (Env u d) () -> IO ()
+persistently env (TX action) = do
     atomically $ flip runReaderT env action
 
-transiently :: Update u d => d -> TX d () -> IO ()
-transiently d (TX action) = do
-    let env = Env d Nothing
-    atomically $ flip runReaderT env action
-
-replayAll :: Update u d => [u] -> d -> IO ()
-replayAll us d = sequence_ $ map (transiently d . replay) us
+replayAll :: Update u d => [u] -> (Env u d) -> IO ()
+replayAll us (Env _ d) = do
+    q' <- newTQueueIO
+    let env = Env q' d
+    sequence_ $ map (persistently env . replay) us
 
 class (Show u, Read u) => Update u d | d -> u where
-    replay :: u -> TX d ()
+    replay :: u -> TX (Env u d) ()
 
 liftSTM :: STM a -> TX d a
 liftSTM = TX . lift
 {-# INLINE liftSTM #-}
 
-getData :: TX d d
+getData :: TX (Env u d) d
 getData = do
-    Env d _ <- TX $ ask
+    Env _ d <- TX $ ask
     return d
 {-# INLINE getData #-}
 
-record :: Update u d => u -> TX d ()
+record :: Update u d => u -> TX (Env u d) ()
 record u = do
-    Env _ q <- TX $ ask
-    case q of
-        Just queue -> liftSTM $ writeTQueue queue (show u)
-        Nothing -> return ()
+    Env q _ <- TX $ ask
+    liftSTM $ writeTQueue q u

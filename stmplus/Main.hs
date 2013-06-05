@@ -5,9 +5,9 @@ module Main where
 
 import Control.Monad
 import Control.Concurrent
-import Control.Concurrent.STMPlus
-import qualified Control.Concurrent.STM as STM
-import Control.Concurrent.STM hiding (atomically)
+import Control.Concurrent.STM
+
+import Database
 
 -------------------------------------------------------------------------------
 
@@ -23,13 +23,13 @@ emptyData = do
 --pushMessage :: String -> MyData -> STMPlus MyDataUpdate ()
 pushMessage :: String -> TX MyData ()
 pushMessage x = do
-    MyData{..} <- getEnv
+    MyData{..} <- getData
     liftSTM $ modifyTVar' messages (x:)
     record (PushMessage x)
 
 popMessage :: TX MyData (Maybe String)
 popMessage = do
-    MyData{..} <- getEnv
+    MyData{..} <- getData
     msgs <- liftSTM $ readTVar messages
     case msgs of
         (x:xs) -> do
@@ -44,9 +44,9 @@ data MyDataUpdate = PushMessage String
                   | PopMessage
                   deriving (Show, Read)
 
-instance Update MyDataUpdate where
-    replay (PushMessage x) = undefined --atomically . pushMessage x
-    replay PopMessage      = undefined --\db -> (atomically (popMessage db) >> return ())
+instance Update MyDataUpdate MyData where
+    replay (PushMessage x) = pushMessage x
+    replay PopMessage      = popMessage >> return ()
 
 -- example of a database method that simply does not record anything
 peekMessage :: TX MyData (Maybe String)
