@@ -30,6 +30,7 @@ data TransactionEnv db = TransactionEnv
     , database :: db
     }
 
+
 transact :: db -> Database db a -> IO a
 transact db (Database action) = do
     commitActionTVar <- newTVarIO id
