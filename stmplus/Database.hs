@@ -1,57 +1,70 @@
-{-# LANGUAGE FunctionalDependencies #-}
+--{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+--{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Database where
 
 import Control.Applicative
+import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Reader
+import System.IO
 
-newtype TX env a = TX (ReaderT env STM a)
+newtype TX d a = TX (ReaderT (Env d) STM a)
     deriving (Functor, Applicative, Monad)
 
-data Env u d where
-    Env :: Update u d => TQueue u -> d -> Env u d
 
-loadEnv :: Update u d => d -> IO (Env u d)
+class (Show Update, Read Update) => Persistent d where
+    data Update :: *
+    replay :: Update -> TX d ()
+
+data Env d where
+    Env :: Persistent d => TQueue Update -> d -> Env d
+
+loadEnv :: Persistent d => d -> IO (Env d)
 loadEnv d = do
     q <- newTQueueIO
-    -- forkIO $ watcher q   -- TODO: ensure only one watcher exists at any one time
+    forkIO $ watcher q   -- TODO: ensure only one watcher exists at any one time
     return (Env q d)
 
-watcher :: Update u d => TQueue u -> IO ()
+watcher :: Show Update => TQueue Update -> IO ()
 watcher q = forever $ do
     u <- atomically $ readTQueue q
-    print u  -- TODO
+    appendFile "db.log" ('\n':show u)
 
-persistently :: Env u d -> TX (Env u d) () -> IO ()
+readUpdates :: Read Update => IO [Update]
+readUpdates = map read . tail . lines <$> readFile "db.log"
+
+persistently :: Env d -> TX d () -> IO ()
 persistently env (TX action) = do
     atomically $ flip runReaderT env action
 
-replayAll :: Update u d => [u] -> (Env u d) -> IO ()
+replayAll :: [Update] -> Env d -> IO ()
 replayAll us (Env _ d) = do
     q' <- newTQueueIO
     let env = Env q' d
     sequence_ $ map (persistently env . replay) us
 
-class (Show u, Read u) => Update u d | d -> u where
-    replay :: u -> TX (Env u d) ()
+
+--class (Show u, Read u) => Update u d where
+--    replay :: u -> TX u d ()
 
 liftSTM :: STM a -> TX d a
 liftSTM = TX . lift
 {-# INLINE liftSTM #-}
 
-getData :: TX (Env u d) d
+getData :: TX d d
 getData = do
     Env _ d <- TX $ ask
     return d
 {-# INLINE getData #-}
 
-record :: Update u d => u -> TX (Env u d) ()
+record :: Update -> TX d ()
 record u = do
     Env q _ <- TX $ ask
     liftSTM $ writeTQueue q u

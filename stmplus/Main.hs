@@ -1,5 +1,6 @@
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+--{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Main where
 
@@ -20,7 +21,6 @@ emptyData = do
 
 -------------------------------------------------------------------------------
 
---pushMessage :: String -> MyData -> STMPlus MyDataUpdate ()
 pushMessage :: String -> TX MyData ()
 pushMessage x = do
     MyData{..} <- getData
@@ -39,19 +39,27 @@ popMessage = do
         _ -> do
             return Nothing
 
-
-data MyDataUpdate = PushMessage String
-                  | PopMessage
-                  deriving (Show, Read)
-
-instance Update MyDataUpdate MyData where
+instance Persistent MyData where
+    data Update = PushMessage String
+                | PopMessage
+                deriving (Show, Read)
     replay (PushMessage x) = pushMessage x
-    replay PopMessage      = popMessage >> return ()
+    replay (PopMessage) = popMessage >> return ()
+
+
+--data MyDataUpdate = PushMessage String
+--                  | PopMessage
+--                  deriving (Show, Read)
+
+--instance Update MyDataUpdate MyData where
+--    replay (PushMessage x) = pushMessage x
+--    replay PopMessage      = popMessage >> return ()
 
 -- example of a database method that simply does not record anything
 peekMessage :: TX MyData (Maybe String)
-peekMessage db = do
-    msgs <- liftSTM $ readTVar (messages db)
+peekMessage = do
+    MyData{..} <- getData
+    msgs <- liftSTM $ readTVar messages
     case msgs of
         (x:_) -> return $ Just x
         []    -> return Nothing
@@ -63,18 +71,18 @@ allMessages db = readTVarIO (messages db)
 -------------------------------------------------------------------------------
 
 main = do
-    db <- emptyData
+    def <- emptyData
+    env <- loadEnv def
 
-    updateQueue <- newTQueueIO
-    forkIO $ watchQueue updateQueue
+    us <- readUpdates
+    replayAll us env
 
-    persistently updateQueue $ do
-        pushMessage "hello" db
-        pushMessage "world" db
+    --persistently env $ do
+    --    pushMessage "hello"
+    --    pushMessage "world"
 
+    let (Env _ d) = env
+    msgs <- allMessages d
 
-watchQueue :: Update u db => TQueue u -> IO ()
-watchQueue q = forever $ do
-    u <- STM.atomically $ readTQueue q
-    print u
+    print msgs
 
