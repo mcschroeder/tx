@@ -21,13 +21,13 @@ emptyData = do
 -------------------------------------------------------------------------------
 
 --pushMessage :: String -> MyData -> STMPlus MyDataUpdate ()
-pushMessage :: String -> STMPlus MyData ()
+pushMessage :: String -> TX MyData ()
 pushMessage x = do
     MyData{..} <- getEnv
     liftSTM $ modifyTVar' messages (x:)
     record (PushMessage x)
 
-popMessage :: STMPlus MyData (Maybe String)
+popMessage :: TX MyData (Maybe String)
 popMessage = do
     MyData{..} <- getEnv
     msgs <- liftSTM $ readTVar messages
@@ -39,16 +39,17 @@ popMessage = do
         _ -> do
             return Nothing
 
+
 data MyDataUpdate = PushMessage String
                   | PopMessage
                   deriving (Show, Read)
 
-instance Update MyDataUpdate MyData where
-    replay (PushMessage x) = atomically . pushMessage x
-    replay PopMessage      = \db -> (atomically (popMessage db) >> return ())
+instance Update MyDataUpdate where
+    replay (PushMessage x) = undefined --atomically . pushMessage x
+    replay PopMessage      = undefined --\db -> (atomically (popMessage db) >> return ())
 
 -- example of a database method that simply does not record anything
-peekMessage :: MyData -> STMPlus MyDataUpdate (Maybe String)
+peekMessage :: TX MyData (Maybe String)
 peekMessage db = do
     msgs <- liftSTM $ readTVar (messages db)
     case msgs of
