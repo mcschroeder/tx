@@ -1,29 +1,76 @@
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+
 module Main where
 
-import Control.Concurrent.STM
+import Control.Monad
+import Control.Concurrent
+import Control.Concurrent.STMPlus
+import qualified Control.Concurrent.STM as STM
+import Control.Concurrent.STM hiding (atomically)
 
-import Database
-import Database.Monad
+-------------------------------------------------------------------------------
+
+data MyData = MyData { messages :: TVar [String] }
+
+emptyData :: IO MyData
+emptyData = do
+    messages <- newTVarIO []
+    return $ MyData messages
+
+-------------------------------------------------------------------------------
+
+pushMessage :: String -> MyData -> STMPlus MyDataUpdate ()
+pushMessage x MyData{..} = do
+    liftSTM $ modifyTVar' messages (x:)
+    record (PushMessage x)
+
+popMessage :: MyData -> STMPlus MyDataUpdate (Maybe String)
+popMessage MyData{..} = do
+    msgs <- liftSTM $ readTVar messages
+    case msgs of
+        (x:xs) -> do
+            liftSTM $ writeTVar messages xs
+            record PopMessage
+            return (Just x)
+        _ -> do
+            return Nothing
+
+data MyDataUpdate = PushMessage String
+                  | PopMessage
+                  deriving (Show, Read)
+
+instance Update MyDataUpdate MyData where
+    replay (PushMessage x) = atomically . pushMessage x
+    replay PopMessage      = \db -> (atomically (popMessage db) >> return ())
+
+-- example of a database method that simply does not record anything
+peekMessage :: MyData -> STMPlus MyDataUpdate (Maybe String)
+peekMessage db = do
+    msgs <- liftSTM $ readTVar (messages db)
+    case msgs of
+        (x:_) -> return $ Just x
+        []    -> return Nothing
+
+-- example of a method 'orthogonal' to the monad
+allMessages :: MyData -> IO [String]
+allMessages db = readTVarIO (messages db)
+
+-------------------------------------------------------------------------------
 
 main = do
     db <- emptyData
-    
-    transactFromRecord db
 
-    --transact db $ do
-    --    pushMessage "hello"
-    --    pushMessage "world"
+    updateQueue <- newTQueueIO
+    forkIO $ watchQueue updateQueue
 
-    --xs <- transact db $ do
-    --    x <- popMessage
-    --    y <- popMessage
-    --    return $ reverse [x,y]
-
-    --print xs
+    persistently updateQueue $ do
+        pushMessage "hello" db
+        pushMessage "world" db
 
 
-    --replayEvents [PushMessage "hello", PushMessage "what", PopMessage, PushMessage "world"] db
-    --replayEvents [PopMessage] db
+watchQueue :: Update u db => TQueue u -> IO ()
+watchQueue q = forever $ do
+    u <- STM.atomically $ readTQueue q
+    print u
 
-    msgs <- allMessages db
-    print msgs
