@@ -20,13 +20,16 @@ emptyData = do
 
 -------------------------------------------------------------------------------
 
-pushMessage :: String -> MyData -> STMPlus MyDataUpdate ()
-pushMessage x MyData{..} = do
+--pushMessage :: String -> MyData -> STMPlus MyDataUpdate ()
+pushMessage :: String -> STMPlus MyData ()
+pushMessage x = do
+    MyData{..} <- getEnv
     liftSTM $ modifyTVar' messages (x:)
     record (PushMessage x)
 
-popMessage :: MyData -> STMPlus MyDataUpdate (Maybe String)
-popMessage MyData{..} = do
+popMessage :: STMPlus MyData (Maybe String)
+popMessage = do
+    MyData{..} <- getEnv
     msgs <- liftSTM $ readTVar messages
     case msgs of
         (x:xs) -> do

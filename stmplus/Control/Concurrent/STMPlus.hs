@@ -4,14 +4,11 @@
 
 module Control.Concurrent.STMPlus
     ( STMPlus
-    , persistently
+    , atomically'
     , atomically
     , onCommit
     , liftSTM
-
-    , Update(..)
-    , replayUpdates
-    , record
+    , getEnv
     ) where
 
 import Control.Applicative
@@ -21,30 +18,25 @@ import Control.Monad
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Reader
 
-newtype STMPlus u a = STMPlus (ReaderT (Env u) STM a)
+newtype STMPlus env a = STMPlus (ReaderT (CommitAction, env) STM a)
     deriving (Functor, Applicative, Monad)
 
-data Env u = Env { commitAction :: TVar (IO () -> IO ())
-                 , updateQueue :: TQueue u}
+type CommitAction = TVar (IO () -> IO ())
 
-atomically :: Update u db => STMPlus u a -> IO a
-atomically action = do
-    -- TODO: hack
-    dummyQueue <- newTQueueIO
-    persistently dummyQueue action
+atomically' :: STMPlus () a -> IO a
+atomically' = atomically ()
 
-persistently :: Update u db => TQueue u -> STMPlus u a -> IO a
-persistently updateQueue (STMPlus action) = do
+atomically :: env -> STMPlus env a -> IO a
+atomically env (STMPlus action) = do
     commitActionTVar <- newTVarIO id
-    let env = Env commitActionTVar updateQueue
-    join . STM.atomically . flip runReaderT env $ do
+    join . STM.atomically . flip runReaderT (commitActionTVar, env) $ do
         result <- action
         commitAction <- lift $ readTVar commitActionTVar
         return (commitAction (return ()) >> return result)
 
-onCommit :: Update u db => IO () -> STMPlus u ()
+onCommit :: IO () -> STMPlus env ()
 onCommit io = do
-    commitActionTVar <- STMPlus $ asks commitAction
+    commitActionTVar <- STMPlus $ asks fst
     liftSTM $ do
         commitAction <- readTVar commitActionTVar
         writeTVar commitActionTVar (commitAction . (io >>))
@@ -52,22 +44,10 @@ onCommit io = do
 -- TODO: for convenience, we probably want to get rid of this
 --       and instead wrap all the STM primitives
 --       (although that could have performance implications?)
-liftSTM :: Update u db => STM a -> STMPlus u a
+liftSTM :: STM a -> STMPlus env a
 liftSTM = STMPlus . lift
 {-# INLINE liftSTM #-}
 
-------------------------------------------------------------------------------
-
-class (Show u, Read u) => Update u db | u -> db, db -> u where
-    replay :: u -> db -> IO ()
-
-replayUpdates :: Update u db => db -> [u] -> IO ()
-replayUpdates = mapM_ . flip replay
-
-readUpdates :: Update u db => IO [u]
-readUpdates = map read . tail . lines <$> readFile "db.log"
-
-record :: Update u db => u -> STMPlus u ()
-record update = do
-    updateQueue <- STMPlus $ asks updateQueue
-    liftSTM $ writeTQueue updateQueue update
+getEnv :: STMPlus env env
+getEnv = STMPlus $ asks snd
+{-# INLINE getEnv #-}
