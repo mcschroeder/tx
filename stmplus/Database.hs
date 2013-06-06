@@ -75,12 +75,9 @@ record u = do
 {-# INLINE record #-}
 
 getData :: TX d d
-getData = do
-    Database {..} <- TX $ ask
-    return userData
+getData = userData <$> TX ask
 {-# INLINE getData #-}
 
 liftSTM :: STM a -> TX d a
 liftSTM = TX . lift
 {-# INLINE liftSTM #-}
-
