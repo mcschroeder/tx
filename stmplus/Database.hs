@@ -65,7 +65,7 @@ serializer Database {..} = forever $ do
 newtype TX d a = TX (ReaderT (Database d) STM a)
     deriving (Functor, Applicative, Monad)
 
-persistently :: Database d -> TX d () -> IO ()
+persistently :: Database d -> TX d a -> IO a
 persistently db (TX action) = atomically $ runReaderT action db
 
 record :: Update -> TX d ()
