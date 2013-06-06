@@ -1,11 +1,20 @@
---{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
---{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE FlexibleContexts #-}
 
-module Database where
+module Database 
+    ( Persistable(..)
+    
+    , Database    
+    , openDatabase
+
+    , TX
+    , persistently
+    , record
+    , getData
+    , liftSTM
+    ) where
 
 import Control.Applicative
 import Control.Concurrent
@@ -15,56 +24,61 @@ import Control.Monad.Trans.Class
 import Control.Monad.Trans.Reader
 import System.IO
 
-newtype TX d a = TX (ReaderT (Env d) STM a)
-    deriving (Functor, Applicative, Monad)
+------------------------------------------------------------------------------
 
-
-class (Show Update, Read Update) => Persistent d where
-    data Update :: *
+class (Show Update, Read Update) => Persistable d where
+    data Update
     replay :: Update -> TX d ()
 
-data Env d where
-    Env :: Persistent d => TQueue Update -> d -> Env d
+------------------------------------------------------------------------------
 
-loadEnv :: Persistent d => d -> IO (Env d)
-loadEnv d = do
+data Database d where
+    Database :: Persistable d => d -> TQueue Update -> FilePath -> Database d
+
+openDatabase :: Persistable d => FilePath -> d -> IO (Database d)
+openDatabase logPath userData = do
+    us <- readUpdates logPath
+    replayUpdates us userData
     q <- newTQueueIO
-    forkIO $ watcher q   -- TODO: ensure only one watcher exists at any one time
-    return (Env q d)
+    let db = Database userData q logPath
+    forkIO $ serializer db
+    return db
 
-watcher :: Show Update => TQueue Update -> IO ()
-watcher q = forever $ do
+readUpdates :: Read Update => FilePath -> IO [Update]
+readUpdates fp = map read . tail . lines <$> readFile fp
+
+replayUpdates :: Persistable d => [Update] -> d -> IO ()
+replayUpdates us userData = do
+    dummyQueue <- newTQueueIO
+    let db = Database userData dummyQueue ""
+    sequence_ $ map (persistently db . replay) us
+
+serializer :: Database d -> IO ()
+serializer (Database _ q logPath) = forever $ do
     u <- atomically $ readTQueue q
-    appendFile "db.log" ('\n':show u)
+    appendFile logPath ('\n':show u)
 
-readUpdates :: Read Update => IO [Update]
-readUpdates = map read . tail . lines <$> readFile "db.log"
+------------------------------------------------------------------------------
 
-persistently :: Env d -> TX d () -> IO ()
-persistently env (TX action) = do
-    atomically $ flip runReaderT env action
+newtype TX d a = TX (ReaderT (Database d) STM a)
+    deriving (Functor, Applicative, Monad)
 
-replayAll :: [Update] -> Env d -> IO ()
-replayAll us (Env _ d) = do
-    q' <- newTQueueIO
-    let env = Env q' d
-    sequence_ $ map (persistently env . replay) us
+persistently :: Database d -> TX d () -> IO ()
+persistently db (TX action) = atomically $ runReaderT action db
 
+record :: Update -> TX d ()
+record u = do
+    Database _ q _ <- TX $ ask
+    liftSTM $ writeTQueue q u
+{-# INLINE record #-}
 
---class (Show u, Read u) => Update u d where
---    replay :: u -> TX u d ()
+getData :: TX d d
+getData = do
+    Database d _ _ <- TX $ ask
+    return d
+{-# INLINE getData #-}
 
 liftSTM :: STM a -> TX d a
 liftSTM = TX . lift
 {-# INLINE liftSTM #-}
 
-getData :: TX d d
-getData = do
-    Env _ d <- TX $ ask
-    return d
-{-# INLINE getData #-}
-
-record :: Update -> TX d ()
-record u = do
-    Env q _ <- TX $ ask
-    liftSTM $ writeTQueue q u

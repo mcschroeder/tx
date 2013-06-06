@@ -1,9 +1,9 @@
 {-# LANGUAGE RecordWildCards #-}
---{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Main where
 
+import Control.Applicative
 import Control.Monad
 import Control.Concurrent
 import Control.Concurrent.STM
@@ -39,21 +39,13 @@ popMessage = do
         _ -> do
             return Nothing
 
-instance Persistent MyData where
+instance Persistable MyData where
     data Update = PushMessage String
                 | PopMessage
                 deriving (Show, Read)
     replay (PushMessage x) = pushMessage x
     replay (PopMessage) = popMessage >> return ()
 
-
---data MyDataUpdate = PushMessage String
---                  | PopMessage
---                  deriving (Show, Read)
-
---instance Update MyDataUpdate MyData where
---    replay (PushMessage x) = pushMessage x
---    replay PopMessage      = popMessage >> return ()
 
 -- example of a database method that simply does not record anything
 peekMessage :: TX MyData (Maybe String)
@@ -71,18 +63,14 @@ allMessages db = readTVarIO (messages db)
 -------------------------------------------------------------------------------
 
 main = do
-    def <- emptyData
-    env <- loadEnv def
+    base <- emptyData
+    db <- openDatabase "db.log" base
 
-    us <- readUpdates
-    replayAll us env
+    persistently db $ do
+        pushMessage "hello"
+        pushMessage "world"
 
-    --persistently env $ do
-    --    pushMessage "hello"
-    --    pushMessage "world"
-
-    let (Env _ d) = env
-    msgs <- allMessages d
+    msgs <- allMessages base
 
     print msgs
 
