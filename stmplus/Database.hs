@@ -1,12 +1,11 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Database 
     ( Persistable(..)
     
-    , Database    
+    , Database(userData)
     , openDatabase
 
     , TX
@@ -32,8 +31,10 @@ class (Show Update, Read Update) => Persistable d where
 
 ------------------------------------------------------------------------------
 
-data Database d where
-    Database :: Persistable d => d -> TQueue Update -> FilePath -> Database d
+data Database d = Database { userData :: d
+                           , logQueue :: TQueue Update
+                           , logPath :: FilePath
+                           }
 
 openDatabase :: Persistable d => FilePath -> d -> IO (Database d)
 openDatabase logPath userData = do
@@ -53,7 +54,7 @@ replayUpdates us userData = do
     let db = Database userData dummyQueue ""
     sequence_ $ map (persistently db . replay) us
 
-serializer :: Database d -> IO ()
+serializer :: Persistable d => Database d -> IO ()
 serializer (Database _ q logPath) = forever $ do
     u <- atomically $ readTQueue q
     appendFile logPath ('\n':show u)
