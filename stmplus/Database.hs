@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Database 
@@ -40,8 +41,8 @@ openDatabase :: Persistable d => FilePath -> d -> IO (Database d)
 openDatabase logPath userData = do
     us <- readUpdates logPath
     replayUpdates us userData
-    q <- newTQueueIO
-    let db = Database userData q logPath
+    logQueue <- newTQueueIO
+    let db = Database {..}
     forkIO $ serializer db
     return db
 
@@ -50,13 +51,13 @@ readUpdates fp = map read . tail . lines <$> readFile fp
 
 replayUpdates :: Persistable d => [Update] -> d -> IO ()
 replayUpdates us userData = do
-    dummyQueue <- newTQueueIO
-    let db = Database userData dummyQueue ""
+    logQueue <- newTQueueIO
+    let db = Database { logPath = "", .. }
     sequence_ $ map (persistently db . replay) us
 
 serializer :: Persistable d => Database d -> IO ()
-serializer (Database _ q logPath) = forever $ do
-    u <- atomically $ readTQueue q
+serializer Database {..} = forever $ do
+    u <- atomically $ readTQueue logQueue
     appendFile logPath ('\n':show u)
 
 ------------------------------------------------------------------------------
@@ -69,14 +70,14 @@ persistently db (TX action) = atomically $ runReaderT action db
 
 record :: Update -> TX d ()
 record u = do
-    Database _ q _ <- TX $ ask
-    liftSTM $ writeTQueue q u
+    Database {..} <- TX $ ask
+    liftSTM $ writeTQueue logQueue u
 {-# INLINE record #-}
 
 getData :: TX d d
 getData = do
-    Database d _ _ <- TX $ ask
-    return d
+    Database {..} <- TX $ ask
+    return userData
 {-# INLINE getData #-}
 
 liftSTM :: STM a -> TX d a
