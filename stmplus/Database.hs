@@ -89,6 +89,11 @@ persistently db (TX action) =
         liftM Right (atomically $ runReaderT action db) `catch` 
             (return . Left)
 
+persistently'' :: Database d -> TX d a -> IO (Either String a)
+persistently'' db (TX action) = 
+        liftM Right (atomically $ runReaderT action db) `catch` 
+            (\e -> return . Left $ show (e :: SomeException))
+
 persistently' :: Database d -> TX d a -> IO a 
 persistently' db (TX action) = atomically $ runReaderT action db
 
