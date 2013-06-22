@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -11,9 +13,11 @@ module Database
 
     , TX
     , persistently
+    , persistently'
     , record
     , getData
     , liftSTM
+    , TXException
     ) where
 
 import Control.Applicative
@@ -23,7 +27,8 @@ import Control.Monad
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Reader
 import System.IO
-
+import System.Directory
+import Control.Exception
 ------------------------------------------------------------------------------
 
 class (Show Update, Read Update) => Persistable d where
@@ -39,17 +44,19 @@ data Database d = Database { userData :: d
 
 openDatabase :: Persistable d => FilePath -> d -> IO (Database d)
 openDatabase logPath userData = do
-    us <- readUpdates' logPath
-    replayUpdates us userData
-    logQueue <- newTQueueIO
-    let db = Database {..}
-    forkIO $ serializer db
-    return db
+     initDbFile logPath
+     us <- readUpdates' logPath
+     replayUpdates us userData
+     logQueue <- newTQueueIO
+     let db = Database {..}
+     forkIO $ serializer db
+     return db
+  where initDbFile path = do 
+            exists <- doesFileExist path
+            unless exists $ withFile path WriteMode (\_ -> return ())
 
 readUpdates :: Read Update => FilePath -> IO [Update]
-readUpdates fp = map read . reportTail . lines <$> readFile fp
-    where reportTail (_:xs) = xs
-          reportTail _      = error "tail failed on log file"
+readUpdates fp = map read . tail . lines <$> readFile fp
 
 -- | same as readUpdates but total with some defaults and log output if
 -- a default is chosen.
@@ -63,7 +70,7 @@ replayUpdates :: Persistable d => [Update] -> d -> IO ()
 replayUpdates us userData = do
     logQueue <- newTQueueIO
     let db = Database { logPath = "", .. }
-    mapM_ (persistently db . replay) us
+    mapM_ (persistently' db . replay) us
 
 serializer :: Persistable d => Database d -> IO ()
 serializer Database {..} = forever $ do
@@ -72,11 +79,18 @@ serializer Database {..} = forever $ do
 
 ------------------------------------------------------------------------------
 
-newtype TX d a = TX ((ReaderT (Database d) STM a))
+newtype TX d a = TX (ReaderT (Database d) STM a)
     deriving (Functor, Applicative, Monad)
 
-persistently :: Database d -> TX d a -> IO a
-persistently db (TX action) = atomically $ runReaderT action db
+class Exception e => TXException e
+
+persistently :: TXException e => Database d -> TX d a -> IO (Either e a)
+persistently db (TX action) = 
+        liftM Right (atomically $ runReaderT action db) `catch` 
+            (return . Left)
+
+persistently' :: Database d -> TX d a -> IO a 
+persistently' db (TX action) = atomically $ runReaderT action db
 
 record :: Update -> TX d ()
 record u = do

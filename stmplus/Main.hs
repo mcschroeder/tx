@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -7,6 +9,8 @@ import Control.Applicative
 import Control.Monad
 import Control.Concurrent
 import Control.Concurrent.STM
+import Control.Exception
+import Data.Typeable
 
 import Database
 
@@ -36,15 +40,14 @@ popMessage = do
             liftSTM $ writeTVar messages xs
             record PopMessage
             return (Just x)
-        _ -> do
-            return Nothing
+        _ -> throw $ StackError "stack empty" 
 
 instance Persistable MyData where
     data Update = PushMessage String
                 | PopMessage
                 deriving (Show, Read)
     replay (PushMessage x) = pushMessage x
-    replay (PopMessage) = popMessage >> return ()
+    replay (PopMessage) = void popMessage 
 
 
 -- example of a database method that simply does not record anything
@@ -62,13 +65,23 @@ allMessages db = readTVarIO (messages db)
 
 -------------------------------------------------------------------------------
 
+data StackError = StackError String deriving (Typeable,Show) 
+
+instance TXException StackError 
+instance Exception StackError
+
 main = do
     base <- emptyData
-    db <- openDatabase "db.log" base
+    db <- openDatabase "db2.log" base
 
-    persistently db $ do
-        pushMessage "hello"
-        pushMessage "world"
+    result <- persistently db $ do
+                 pushMessage "hello"
+                 pushMessage "world"
+                 mapM (const popMessage) [1..1]
+
+    case result of
+        Left e -> putStrLn $ "Stackexn: " ++ show (e::StackError)
+        Right a -> print a
 
     msgs <- allMessages base
 
