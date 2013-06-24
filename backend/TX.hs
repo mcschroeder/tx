@@ -17,6 +17,8 @@ module TX
     , getData
     , liftSTM
     , throwTX
+
+    , (<?>)
     ) where
 
 import Control.Applicative
@@ -102,3 +104,9 @@ liftSTM = TX . lift
 throwTX :: Exception e => e -> TX d a
 throwTX = liftSTM . throwSTM
 {-# INLINE throwTX #-}
+
+-- TODO: generalize to MonadPlus
+(<?>) :: Exception e => TX d (Maybe a) -> e -> TX d a
+act <?> err = act >>= \case
+    Nothing -> throwTX err
+    Just x  -> return x
