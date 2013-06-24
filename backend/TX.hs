@@ -20,17 +20,19 @@ module TX
     , throwTX
 
     , (<?>)
+    , whenJust
     ) where
 
 import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.STM
+import Control.Exception
 import Control.Monad
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Reader
+import Data.Maybe
 import System.IO
 import System.Directory
-import Control.Exception
 
 ------------------------------------------------------------------------------
 
@@ -109,8 +111,10 @@ throwTX :: Exception e => e -> TX d a
 throwTX = liftSTM . throwSTM
 {-# INLINE throwTX #-}
 
--- TODO: generalize to MonadPlus
 (<?>) :: Exception e => TX d (Maybe a) -> e -> TX d a
 act <?> err = act >>= \case
     Nothing -> throwTX err
     Just x  -> return x
+
+whenJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
+whenJust x act = when (isJust x) (act $ fromJust x)
