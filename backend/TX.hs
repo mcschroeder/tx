@@ -5,7 +5,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Foodle.PersistentDB
+module TX
     ( Persistable(..)
     
     , Database(userData)
@@ -13,13 +13,10 @@ module Foodle.PersistentDB
 
     , TX
     , persistently
-    , persistently'
-    , persistently''
     , record
     , getData
     , liftSTM
     , throwTX
-    , TXException
     ) where
 
 import Control.Applicative
@@ -31,6 +28,7 @@ import Control.Monad.Trans.Reader
 import System.IO
 import System.Directory
 import Control.Exception
+
 ------------------------------------------------------------------------------
 
 class (Show Update, Read Update) => Persistable d where
@@ -72,7 +70,7 @@ replayUpdates :: Persistable d => [Update] -> d -> IO ()
 replayUpdates us userData = do
     logQueue <- newTQueueIO
     let db = Database { logPath = "", .. }
-    mapM_ (persistently' db . replay) us
+    mapM_ (persistently db . replay) us
 
 serializer :: Persistable d => Database d -> IO ()
 serializer Database {..} = forever $ do
@@ -84,20 +82,8 @@ serializer Database {..} = forever $ do
 newtype TX d a = TX (ReaderT (Database d) STM a)
     deriving (Functor, Applicative, Monad)
 
-class Exception e => TXException e
-
-persistently :: TXException e => Database d -> TX d a -> IO (Either e a)
-persistently db (TX action) = 
-        liftM Right (atomically $ runReaderT action db) `catch` 
-            (return . Left)
-
-persistently'' :: Database d -> TX d a -> IO (Either String a)
-persistently'' db (TX action) = 
-        liftM Right (atomically $ runReaderT action db) `catch` 
-            (\e -> return . Left $ show (e :: SomeException))
-
-persistently' :: Database d -> TX d a -> IO a 
-persistently' db (TX action) = atomically $ runReaderT action db
+persistently :: Database d -> TX d a -> IO a 
+persistently db (TX action) = atomically $ runReaderT action db
 
 record :: Update -> TX d ()
 record u = do
@@ -115,3 +101,4 @@ liftSTM = TX . lift
 
 throwTX :: Exception e => e -> TX d a
 throwTX = liftSTM . throwSTM
+{-# INLINE throwTX #-}
