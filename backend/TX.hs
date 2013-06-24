@@ -10,6 +10,7 @@ module TX
     
     , Database(userData)
     , openDatabase
+    , withUserData
 
     , TX
     , persistently
@@ -56,6 +57,9 @@ openDatabase logPath userData = do
   where initDbFile path = do 
             exists <- doesFileExist path
             unless exists $ withFile path WriteMode (\_ -> return ())
+
+withUserData :: Database d -> (d -> IO a) -> IO a
+withUserData db act = act (userData db)
 
 readUpdates :: Read Update => FilePath -> IO [Update]
 readUpdates fp = map read . tail . lines <$> readFile fp
