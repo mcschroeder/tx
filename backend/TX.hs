@@ -44,41 +44,32 @@ class (Show Update, Read Update) => Persistable d where
 
 data Database d = Database { userData :: d
                            , logQueue :: TQueue Update
-                           , logPath :: FilePath
+                           , logPath  :: FilePath
+                           , _record  :: TQueue Update -> Update -> STM ()
                            }
 
 openDatabase :: Persistable d => FilePath -> d -> IO (Database d)
 openDatabase logPath userData = do
-     initDbFile logPath
-     us <- readUpdates' logPath
-     replayUpdates us userData
-     logQueue <- newTQueueIO
-     let db = Database {..}
-     forkIO $ serializer db
-     return db
+    initDbFile logPath
+    logQueue <- newTQueueIO
+    let db = Database { _record = const $ const $ return (), .. }
+    readUpdates logPath >>= replayUpdates db
+    forkIO $ serializer db
+    return $ db { _record = writeTQueue }
   where initDbFile path = do 
             exists <- doesFileExist path
             unless exists $ withFile path WriteMode (\_ -> return ())
 
-withUserData :: Database d -> (d -> IO a) -> IO a
-withUserData db act = act (userData db)
-
 readUpdates :: Read Update => FilePath -> IO [Update]
 readUpdates fp = map read . tail . lines <$> readFile fp
 
--- | same as readUpdates but total with some defaults and log output if
--- a default is chosen.
-readUpdates' :: Read Update => FilePath -> IO [Update] 
-readUpdates' fp = interpretUpdates =<< return . lines =<< readFile fp
-    where interpretUpdates []     = putStrLn "warning. empty log" >> return []
-          interpretUpdates (_:[]) = putStrLn "only one entry in db" >> return []
-          interpretUpdates (_:xs) = return $ map read xs 
+replayUpdates :: Persistable d => Database d -> [Update] -> IO ()
+replayUpdates db = mapM_ (persistently db . replay)
 
-replayUpdates :: Persistable d => [Update] -> d -> IO ()
-replayUpdates us userData = do
-    logQueue <- newTQueueIO
-    let db = Database { logPath = "", .. }
-    mapM_ (persistently db . replay) us
+withUserData :: Database d -> (d -> IO a) -> IO a
+withUserData db act = act (userData db)
+
+------------------------------------------------------------------------------
 
 serializer :: Persistable d => Database d -> IO ()
 serializer Database {..} = forever $ do
@@ -96,7 +87,7 @@ persistently db (TX action) = atomically $ runReaderT action db
 record :: Update -> TX d ()
 record u = do
     Database {..} <- TX ask
-    liftSTM $ writeTQueue logQueue u
+    liftSTM $ _record logQueue u
 {-# INLINE record #-}
 
 getData :: TX d d
