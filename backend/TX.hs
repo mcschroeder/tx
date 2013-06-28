@@ -7,7 +7,7 @@
 
 module TX
     ( Persistable(..)
-    
+
     , Database(userData)
     , openDatabase
     , withUserData
@@ -30,13 +30,16 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.Trans.Class
 import Control.Monad.Trans.Reader
+import qualified Data.ByteString as B
 import Data.Maybe
+import Data.SafeCopy
+import Data.Serialize
 import System.IO
 import System.Directory
 
 ------------------------------------------------------------------------------
 
-class (Show Update, Read Update) => Persistable d where
+class SafeCopy Update => Persistable d where
     data Update
     replay :: Update -> TX d ()
 
@@ -56,12 +59,23 @@ openDatabase logPath userData = do
     readUpdates logPath >>= replayUpdates db
     forkIO $ serializer db
     return $ db { _record = writeTQueue }
-  where initDbFile path = do 
+  where initDbFile path = do
             exists <- doesFileExist path
             unless exists $ withFile path WriteMode (\_ -> return ())
 
-readUpdates :: Read Update => FilePath -> IO [Update]
-readUpdates fp = map read . tail . lines <$> readFile fp
+readUpdates :: SafeCopy Update => FilePath -> IO [Update]
+readUpdates fp = do
+    str <- B.readFile fp
+    case runGet getUpdates str of
+        Left str -> error ("TX.readUpdates: " ++ str)
+        Right us -> return us
+
+getUpdates :: SafeCopy Update => Get [Update]
+getUpdates = isEmpty >>= \case
+    True  -> return []
+    False -> do u  <- safeGet
+                us <- getUpdates
+                return (u:us)
 
 replayUpdates :: Persistable d => Database d -> [Update] -> IO ()
 replayUpdates db = mapM_ (persistently db . replay)
@@ -74,14 +88,15 @@ withUserData db act = act (userData db)
 serializer :: Persistable d => Database d -> IO ()
 serializer Database {..} = forever $ do
     u <- atomically $ readTQueue logQueue
-    appendFile logPath ('\n':show u)
+    let str = runPut (safePut u)
+    B.appendFile logPath str
 
 ------------------------------------------------------------------------------
 
 newtype TX d a = TX (ReaderT (Database d) STM a)
     deriving (Functor, Applicative, Monad)
 
-persistently :: Database d -> TX d a -> IO a 
+persistently :: Database d -> TX d a -> IO a
 persistently db (TX action) = atomically $ runReaderT action db
 
 record :: Update -> TX d ()
