@@ -10,6 +10,7 @@ module TX
 
     , Database(userData)
     , openDatabase
+    , closeDatabase
     , withUserData
 
     , TX
@@ -68,21 +69,26 @@ closeDatabase Database {..} =
     hClose logHandle
 
 replayUpdates :: Persistable d => Database d -> IO ()
-replayUpdates db = mapLog_ (persistently db . replay) (logHandle db)
+replayUpdates db = mapDecode (persistently db . replay)
+                             (B.hGetSome (logHandle db) 1024)
 
-mapLog_ :: SafeCopy a => (a -> IO ()) -> Handle -> IO ()
-mapLog_ f h = go run =<< nextChunk
+-- | 'mapDecode' @f nextChunk@ repeatedly calls @nextChunk@ to get a
+-- 'B.ByteString', (partially) decodes this string using 'safeGet' and
+-- and then applies @f@ to the (final) result. This continues until
+-- @nextChunk@ returns an empty ByteString.
+mapDecode :: SafeCopy a => (a -> IO ()) -> IO B.ByteString -> IO ()
+mapDecode f nextChunk = go run =<< nextChunk
     where
-        nextChunk = B.hGetSome h 1024  -- TODO: tweak buffer
         run = runGetPartial safeGet
         go k c = case k c of
-            Fail    err  -> error ("TX.replayAll: " ++ err)
+            Fail    err  -> error ("TX.mapDecode: " ++ err)
             Partial k'   -> go k' =<< nextChunk
-            Done    u c' -> f u >> if (not . B.null) c'
-                                       then go run c'
-                                       else hIsEOF h >>= \case
-                                           False -> go run =<< nextChunk
-                                           True  -> return ()
+            Done    u c' -> f u >> if B.null c'
+                                       then do c'' <- nextChunk
+                                               if B.null c''
+                                                   then return ()
+                                                   else go run c''
+                                       else go run c'
 
 withUserData :: Database d -> (d -> IO a) -> IO a
 withUserData db act = act (userData db)
