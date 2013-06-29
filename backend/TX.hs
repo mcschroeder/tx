@@ -35,7 +35,6 @@ import Data.Maybe
 import Data.SafeCopy
 import Data.Serialize
 import System.IO
-import System.Directory
 
 ------------------------------------------------------------------------------
 
@@ -45,40 +44,45 @@ class SafeCopy Update => Persistable d where
 
 ------------------------------------------------------------------------------
 
-data Database d = Database { userData :: d
-                           , logQueue :: TQueue Update
-                           , logPath  :: FilePath
-                           , _record  :: TQueue Update -> Update -> STM ()
+data Database d = Database { userData  :: d
+                           , logHandle :: Handle
+                           , logQueue  :: TQueue Update
+                           , _record   :: TQueue Update -> Update -> STM ()
                            }
 
 openDatabase :: Persistable d => FilePath -> d -> IO (Database d)
 openDatabase logPath userData = do
-    initDbFile logPath
+    putStr ("Opening " ++ logPath ++ " database... ")
+    logHandle <- openBinaryFile logPath ReadWriteMode
     logQueue <- newTQueueIO
-    let db = Database { _record = const $ const $ return (), .. }
-    readUpdates logPath >>= replayUpdates db
-    forkIO $ serializer db
-    return $ db { _record = writeTQueue }
-  where initDbFile path = do
-            exists <- doesFileExist path
-            unless exists $ withFile path WriteMode (\_ -> return ())
+    let _db = Database { _record = const $ const $ return (), .. }
+    replayUpdates _db
+    forkIO $ serializer _db
+    let db = _db { _record = writeTQueue }
+    putStrLn ("DONE")
+    return db
 
-readUpdates :: SafeCopy Update => FilePath -> IO [Update]
-readUpdates fp = do
-    str <- B.readFile fp
-    case runGet getUpdates str of
-        Left str -> error ("TX.readUpdates: " ++ str)
-        Right us -> return us
+closeDatabase :: Database d -> IO ()
+closeDatabase Database {..} =
+    -- TODO: wait for the serializer to finish & kill its thread
+    hClose logHandle
 
-getUpdates :: SafeCopy Update => Get [Update]
-getUpdates = isEmpty >>= \case
-    True  -> return []
-    False -> do u  <- safeGet
-                us <- getUpdates
-                return (u:us)
+replayUpdates :: Persistable d => Database d -> IO ()
+replayUpdates db = mapLog_ (persistently db . replay) (logHandle db)
 
-replayUpdates :: Persistable d => Database d -> [Update] -> IO ()
-replayUpdates db = mapM_ (persistently db . replay)
+mapLog_ :: SafeCopy a => (a -> IO ()) -> Handle -> IO ()
+mapLog_ f h = go run =<< nextChunk
+    where
+        nextChunk = B.hGetSome h 1024  -- TODO: tweak buffer
+        run = runGetPartial safeGet
+        go k c = case k c of
+            Fail    err  -> error ("TX.replayAll: " ++ err)
+            Partial k'   -> go k' =<< nextChunk
+            Done    u c' -> f u >> if (not . B.null) c'
+                                       then go run c'
+                                       else hIsEOF h >>= \case
+                                           False -> go run =<< nextChunk
+                                           True  -> return ()
 
 withUserData :: Database d -> (d -> IO a) -> IO a
 withUserData db act = act (userData db)
@@ -89,7 +93,7 @@ serializer :: Persistable d => Database d -> IO ()
 serializer Database {..} = forever $ do
     u <- atomically $ readTQueue logQueue
     let str = runPut (safePut u)
-    B.appendFile logPath str
+    B.hPut logHandle str
 
 ------------------------------------------------------------------------------
 
