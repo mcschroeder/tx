@@ -21,6 +21,7 @@ module TX
     , getData
     , liftSTM
     , throwTX
+    , unsafeIOToTX
 
       -- * Utility functions
     , (<?>)
@@ -37,6 +38,7 @@ import qualified Data.ByteString as B
 import Data.Maybe
 import Data.SafeCopy
 import Data.Serialize
+import GHC.Conc
 import System.IO
 
 ------------------------------------------------------------------------------
@@ -203,6 +205,14 @@ liftSTM = TX . lift
 throwTX :: Exception e => e -> TX d a
 throwTX = liftSTM . throwSTM
 {-# INLINE throwTX #-}
+
+-- | Unsafely performs IO in the TX monad. Highly dangerous!
+-- The same caveats as with 'unsafeIOToSTM' apply.
+--
+-- @unsafeIOToTX = liftSTM . unsafeIOToSTM@
+unsafeIOToTX :: IO a -> TX d a
+unsafeIOToTX = liftSTM . unsafeIOToSTM
+{-# INLINE unsafeIOToTX #-}
 
 ------------------------------------------------------------------------------
 
