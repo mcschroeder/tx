@@ -24,7 +24,6 @@ module TX
 
       -- * Utility functions
     , (<?>)
-    , whenJust
     ) where
 
 import Control.Applicative
@@ -210,7 +209,3 @@ throwTX = liftSTM . throwSTM
 -- | @act \<?\> err = maybe (throwTX err) return =<< act@
 (<?>) :: Exception e => TX d (Maybe a) -> e -> TX d a
 act <?> err = maybe (throwTX err) return =<< act
-
--- | @whenJust x act = when (isJust x) (act $ fromJust x)@
-whenJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
-whenJust x act = when (isJust x) (act $ fromJust x)
