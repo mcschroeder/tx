@@ -119,7 +119,7 @@ openDatabase logPath userData = do
     logHandle <- openBinaryFile logPath ReadWriteMode
     logQueue <- newTQueueIO
     let _db = Database { _record = const $ const $ return (), .. }
-    replayUpdates _db
+    hIsEOF logHandle >>= flip unless (replayUpdates _db)
     forkIO $ serializer _db
     let db = _db { _record = writeTQueue }
     putStrLn ("DONE")
