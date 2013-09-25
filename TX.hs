@@ -103,10 +103,11 @@ class SafeCopy Update => Persistable d where
 ------------------------------------------------------------------------------
 
 -- | An opaque type wrapping any kind of user data for use in the 'TX' monad.
-data Database d = Database { userData  :: d
+data Database d = Database { userData :: d
                            , logHandle :: Handle
-                           , logQueue  :: TQueue Update
-                           , _record   :: TQueue Update -> Update -> STM ()
+                           , logQueue :: TQueue Update
+                           , _record :: TQueue Update -> Update -> STM ()
+                           , serializerTid :: MVar ThreadId
                            }
 
 -- | Opens the database at the given path or creates a new one.
@@ -118,16 +119,21 @@ openDatabase logPath userData = do
     putStr ("Opening " ++ logPath ++ " database... ")
     logHandle <- openBinaryFile logPath ReadWriteMode
     logQueue <- newTQueueIO
+    serializerTid <- newEmptyMVar
     let _db = Database { _record = const $ const $ return (), .. }
     hIsEOF logHandle >>= flip unless (replayUpdates _db)
-    forkIO $ serializer _db
+    putMVar serializerTid =<< forkIO (serializer _db)
     let db = _db { _record = writeTQueue }
     putStrLn ("DONE")
     return db
 
+-- TODO: throw actual error when operating on a closed database
+-- | Close a database. Blocks until all pending recordings been serialized.
+-- Using a database after it has been closed is an error.
 closeDatabase :: Database d -> IO ()
-closeDatabase Database {..} =
-    -- TODO: wait for the serializer to finish & kill its thread
+closeDatabase Database {..} = do
+    atomically $ check =<< isEmptyTQueue logQueue
+    killThread =<< takeMVar serializerTid
     hClose logHandle
 
 replayUpdates :: Persistable d => Database d -> IO ()
