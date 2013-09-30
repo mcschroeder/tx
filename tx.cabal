@@ -27,7 +27,6 @@ library
   
   default-language:    Haskell2010  
   other-extensions:    TypeSynonymInstances
-                     , LambdaCase
                      , FlexibleContexts
                      , GeneralizedNewtypeDeriving
                      , RecordWildCards

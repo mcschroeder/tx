@@ -1,5 +1,4 @@
 {-# LANGUAGE TypeSynonymInstances #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -91,9 +90,11 @@ import System.IO
 -- >     putCopy (CreatePost p)   = contain $ putWord8 0 >> safePut p
 -- >     putCopy (ModifyPost n p) = contain $ putWord8 1 >> safePut n >> safePut p
 -- >     getCopy = contain $ do
--- >         getWord8 >>= \case
+-- >         tag <- getWord8
+-- >         case tag of
 -- >             0 -> CreatePost <$> safeGet
 -- >             1 -> ModifyPost <$> safeGet <*> safeGet
+-- >             _ -> fail $ "unknown tag: " ++ show tag
 class SafeCopy (Update d) => Persistable d where
     data Update d
     replay :: Update d -> TX d ()
