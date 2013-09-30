@@ -56,8 +56,8 @@ import System.IO
 -- > data MyDB = MyDB { posts :: TVar [String] }
 -- >
 -- > instance Persistable MyDB where
--- >     data Update = CreatePost String
--- >                 | ModifyPost Int String
+-- >     data Update MyDB = CreatePost String
+-- >                      | ModifyPost Int String
 -- >
 -- >     replay (CreatePost p)   = void $ createPost p
 -- >     replay (ModifyPost n p) = modifyPost n p
@@ -87,16 +87,16 @@ import System.IO
 -- it's not possible to derive SafeCopy instances for associated types
 -- automatically, so you have to do it by hand:
 --
--- > instance SafeCopy Update where
+-- > instance SafeCopy (Update MyDB) where
 -- >     putCopy (CreatePost p)   = contain $ putWord8 0 >> safePut p
 -- >     putCopy (ModifyPost n p) = contain $ putWord8 1 >> safePut n >> safePut p
 -- >     getCopy = contain $ do
 -- >         getWord8 >>= \case
 -- >             0 -> CreatePost <$> safeGet
 -- >             1 -> ModifyPost <$> safeGet <*> safeGet
-class SafeCopy Update => Persistable d where
-    data Update
-    replay :: Update -> TX d ()
+class SafeCopy (Update d) => Persistable d where
+    data Update d
+    replay :: Update d -> TX d ()
 
 -- TODO: provide automatic derivation using TH
 
@@ -105,8 +105,8 @@ class SafeCopy Update => Persistable d where
 -- | An opaque type wrapping any kind of user data for use in the 'TX' monad.
 data Database d = Database { userData :: d
                            , logHandle :: Handle
-                           , logQueue :: TQueue Update
-                           , _record :: TQueue Update -> Update -> STM ()
+                           , logQueue :: TQueue (Update d)
+                           , _record :: TQueue (Update d) -> (Update d) -> STM ()
                            , serializerTid :: MVar ThreadId
                            }
 
@@ -189,7 +189,7 @@ persistently db (TX action) = atomically $ runReaderT action db
 -- | Record an 'Update' to be serialized to disk when the transaction commits.
 -- If the transaction retries, the update is still only recorded once.
 -- If the transaction aborts, the update is not recorded at all.
-record :: Update -> TX d ()
+record :: Update d -> TX d ()
 record u = do
     Database {..} <- TX ask
     liftSTM $ _record logQueue u
