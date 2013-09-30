@@ -1,11 +1,13 @@
 name:                tx
 version:             0.1.0.0
-synopsis:            Persistent transactions on top of STM
--- description:         
+synopsis:            Persistent transactions on top of STM.
+description:         Persistent transactions on top of STM.
 license:             MIT
 license-file:        LICENSE
 author:              Michael Schröder
 maintainer:          mc.schroeder@gmail.com
+homepage:            https://github.com/mcschroeder/tx
+bug-reports:         https://github.com/mcschroeder/tx/issues
 copyright:           (c) 2013 Michael Schröder
 category:            Database
 build-type:          Simple
@@ -30,3 +32,7 @@ library
                      , GeneralizedNewtypeDeriving
                      , RecordWildCards
                      , TypeFamilies
+
+source-repository head
+  type:     git
+  location: https://github.com/mcschroeder/tx.git

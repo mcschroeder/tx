@@ -140,7 +140,7 @@ replayUpdates :: Persistable d => Database d -> IO ()
 replayUpdates db = mapDecode (persistently db . replay)
                              (B.hGetSome (logHandle db) 1024)
 
--- | 'mapDecode' @f nextChunk@ repeatedly calls @nextChunk@ to get a
+-- | @mapDecode f nextChunk@ repeatedly calls @nextChunk@ to get a
 -- 'B.ByteString', (partially) decodes this string using 'safeGet' and
 -- and then applies @f@ to the (final) result. This continues until
 -- @nextChunk@ returns an empty ByteString.
