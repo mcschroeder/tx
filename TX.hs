@@ -9,7 +9,7 @@ module TX
     ( Persistable(..)
 
       -- * Managing the database
-    , Database(userData)
+    , Database
     , openDatabase
     , closeDatabase
     , withUserData
@@ -158,7 +158,8 @@ mapDecode f nextChunk = go run =<< nextChunk
                                                    else go run c''
                                        else go run c'
 
-withUserData :: Database d -> (d -> IO a) -> IO a
+-- | Operate non-persistently on the user data contained in the database.
+withUserData :: Database d -> (d -> a) -> a
 withUserData db act = act (userData db)
 
 ------------------------------------------------------------------------------
